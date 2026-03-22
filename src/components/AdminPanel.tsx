@@ -1,13 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useGameStore, GameConfig } from '../store';
-import { db, auth, storage } from '../firebase';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
-import { signInWithPopup, GoogleAuthProvider, signOut } from 'firebase/auth';
 import { 
-  Box, Users, ShieldAlert, Zap, Building2, 
-  Map, Camera, Settings, LayoutTemplate, 
-  BarChart3, ScrollText, Upload, RotateCcw, X
+  Box, Camera, Settings, RotateCcw, X
 } from 'lucide-react';
 
 interface AssetDef {
@@ -49,40 +43,29 @@ export function AdminPanel() {
   
   const [localConfig, setLocalConfig] = useState<GameConfig>(config);
   const [isAdmin, setIsAdmin] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const [uploadingId, setUploadingId] = useState<string | null>(null);
-  const [uploadProgress, setUploadProgress] = useState<number>(0);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const [activeAssetId, setActiveAssetId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState('glb');
+  
+  // Login states
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
 
   useEffect(() => {
-    const unsubscribe = auth.onAuthStateChanged(async (user) => {
-      setLoading(true);
-      if (user) {
-        if (user.email === 'alyinel9@gmail.com' && user.emailVerified) {
-          setIsAdmin(true);
-          await loadConfig();
-        } else {
-          setIsAdmin(false);
-          setError('Bu panele erişim yetkiniz yok.');
-        }
-      } else {
-        setIsAdmin(false);
-      }
-      setLoading(false);
-    });
-    return () => unsubscribe();
+    // Check if previously logged in (simple session)
+    const session = sessionStorage.getItem('admin_session');
+    if (session === 'active') {
+      setIsAdmin(true);
+      loadConfig();
+    }
   }, []);
 
-  const loadConfig = async () => {
+  const loadConfig = () => {
     try {
-      const docRef = doc(db, 'config', 'game');
-      const docSnap = await getDoc(docRef);
-      if (docSnap.exists()) {
-        const data = docSnap.data() as GameConfig;
+      const saved = localStorage.getItem('neon_rush_config');
+      if (saved) {
+        const data = JSON.parse(saved) as GameConfig;
         setLocalConfig(data);
         setConfig(data);
       }
@@ -92,104 +75,38 @@ export function AdminPanel() {
     }
   };
 
-  const handleSave = async (newConfig: GameConfig) => {
+  const handleSave = (newConfig: GameConfig) => {
     setSaving(true);
     setError('');
     try {
-      await setDoc(doc(db, 'config', 'game'), newConfig);
+      localStorage.setItem('neon_rush_config', JSON.stringify(newConfig));
       setConfig(newConfig);
     } catch (err: any) {
       console.error("Error saving config:", err);
       setError('Ayarlar kaydedilirken hata oluştu: ' + err.message);
     }
-    setSaving(false);
+    setTimeout(() => setSaving(false), 500); // Fake delay for UX
   };
 
-  const handleLogin = async () => {
-    const provider = new GoogleAuthProvider();
-    try {
-      await signInWithPopup(auth, provider);
-    } catch (err: any) {
-      console.error("Login error:", err);
-      setError('Giriş başarısız.');
-    }
-  };
-
-  const handleLogout = async () => {
-    await signOut(auth);
-  };
-
-  const triggerUpload = (id: string) => {
-    setActiveAssetId(id);
-    if (fileInputRef.current) {
-      fileInputRef.current.click();
-    }
-  };
-
-  const onFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !activeAssetId) return;
+  const handleLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
     
-    // Check if it's a GLB file
-    if (!file.name.toLowerCase().endsWith('.glb')) {
-      alert('Lütfen sadece .glb uzantılı dosyalar yükleyin.');
-      return;
+    // Simple hardcoded credentials
+    if (username === 'admin' && password === 'admin123') {
+      setIsAdmin(true);
+      sessionStorage.setItem('admin_session', 'active');
+      loadConfig();
+    } else {
+      setError('Kullanıcı adı veya şifre hatalı.');
     }
+  };
 
-    const asset = ASSETS.find(a => a.id === activeAssetId);
-    if (!asset) return;
-
-    setUploadingId(activeAssetId);
-    setUploadProgress(0);
-
-    try {
-      // Create a reference to 'assets/...'
-      const storageRef = ref(storage, asset.path);
-      const uploadTask = uploadBytesResumable(storageRef, file);
-
-      uploadTask.on('state_changed', 
-        (snapshot) => {
-          const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-          setUploadProgress(progress);
-        }, 
-        (error) => {
-          console.error("Upload failed:", error);
-          alert("Yükleme başarısız: " + error.message);
-          setUploadingId(null);
-        }, 
-        async () => {
-          const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
-          
-          // Update local config
-          let newConfig = { ...localConfig };
-          if (asset.subKey) {
-            newConfig = {
-              ...newConfig,
-              [asset.category]: {
-                ...(newConfig[asset.category] as any || {}),
-                [asset.subKey]: downloadURL
-              }
-            };
-          } else {
-            newConfig = {
-              ...newConfig,
-              [asset.category]: downloadURL
-            };
-          }
-          
-          setLocalConfig(newConfig);
-          await handleSave(newConfig);
-          setUploadingId(null);
-          
-          // Reset file input
-          if (fileInputRef.current) fileInputRef.current.value = '';
-        }
-      );
-    } catch (err: any) {
-      console.error("Upload error:", err);
-      alert("Yükleme sırasında bir hata oluştu: " + err.message);
-      setUploadingId(null);
-    }
+  const handleLogout = () => {
+    setIsAdmin(false);
+    sessionStorage.removeItem('admin_session');
+    setUsername('');
+    setPassword('');
   };
 
   const handleReset = async (asset: AssetDef) => {
@@ -230,34 +147,55 @@ export function AdminPanel() {
     return (
       <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#050510] z-50 font-mono">
         <h1 className="text-4xl text-[#00f0ff] font-bold mb-8 tracking-widest">NEON RUSH - EDITOR</h1>
-        {error && <div className="text-[#ff0055] mb-4 border border-[#ff0055] p-3 bg-[#ff0055]/10">{error}</div>}
-        <button 
-          onClick={handleLogin}
-          className="px-8 py-4 bg-transparent border-2 border-[#00f0ff] text-[#00f0ff] hover:bg-[#00f0ff]/10 font-bold rounded mb-4 transition-all"
-        >
-          YETKİLİ GİRİŞİ
-        </button>
-        <button 
-          onClick={closeAdmin}
-          className="px-8 py-4 bg-transparent border-2 border-gray-600 text-gray-400 hover:bg-gray-800 font-bold rounded transition-all"
-        >
-          İPTAL
-        </button>
+        
+        <form onSubmit={handleLogin} className="bg-[#0a0a18] border border-[#1e1e38] p-8 rounded-lg w-full max-w-sm flex flex-col gap-4">
+          <h2 className="text-xl text-white font-bold mb-2 text-center">YETKİLİ GİRİŞİ</h2>
+          
+          {error && <div className="text-[#ff0055] text-sm border border-[#ff0055] p-2 bg-[#ff0055]/10 rounded text-center">{error}</div>}
+          
+          <div>
+            <label className="block text-gray-400 text-xs mb-1">Kullanıcı Adı</label>
+            <input 
+              type="text" 
+              value={username}
+              onChange={e => setUsername(e.target.value)}
+              className="w-full bg-[#050510] border border-[#1e1e38] rounded p-2 text-white focus:border-[#00f0ff] outline-none"
+              placeholder="admin"
+            />
+          </div>
+          
+          <div>
+            <label className="block text-gray-400 text-xs mb-1">Şifre</label>
+            <input 
+              type="password" 
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              className="w-full bg-[#050510] border border-[#1e1e38] rounded p-2 text-white focus:border-[#00f0ff] outline-none"
+              placeholder="admin123"
+            />
+          </div>
+
+          <button 
+            type="submit"
+            className="w-full mt-4 px-4 py-3 bg-[#00f0ff] hover:bg-[#00f0ff]/80 text-black font-bold rounded transition-all"
+          >
+            GİRİŞ YAP
+          </button>
+          
+          <button 
+            type="button"
+            onClick={closeAdmin}
+            className="w-full mt-2 px-4 py-2 bg-transparent border border-gray-600 text-gray-400 hover:bg-gray-800 font-bold rounded transition-all text-sm"
+          >
+            İPTAL
+          </button>
+        </form>
       </div>
     );
   }
 
   return (
     <div className="absolute inset-0 flex flex-col bg-[#050510] z-50 font-mono text-gray-300 overflow-hidden">
-      {/* Hidden File Input */}
-      <input 
-        type="file" 
-        ref={fileInputRef} 
-        onChange={onFileChange} 
-        accept=".glb" 
-        className="hidden" 
-      />
-
       {/* Header */}
       <div className="h-14 border-b border-[#1e1e38] flex items-center justify-between px-6 bg-[#0a0a18]">
         <div className="flex items-center gap-3">
@@ -300,74 +238,74 @@ export function AdminPanel() {
         {/* Main Content */}
         <div className="flex-1 overflow-y-auto p-8">
           {activeTab === 'glb' && (
-            <>
+            <div className="max-w-4xl">
               <div className="mb-8">
                 <h2 className="text-2xl font-bold text-[#00f0ff] mb-2 tracking-wide">GLB VARLIK YÖNETİMİ</h2>
-                <p className="text-gray-500 text-sm">Tüm 3D modelleri burada yükleyin ve yönetin. Yüklenen modeller otomatik aktif olur.</p>
+                <p className="text-gray-500 text-sm">Modellerin dosya yollarını (örn: /models/car.glb) veya tam URL'lerini girin. Dosyaları projenizin <code className="text-[#ff0055]">public/models/</code> klasörüne manuel olarak atabilirsiniz.</p>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
                 {ASSETS.map(asset => {
-                  const url = getAssetUrl(asset);
-                  const isUploaded = !!url;
-                  const isUploading = uploadingId === asset.id;
+                  const value = getAssetUrl(asset) || '';
 
                   return (
-                    <div key={asset.id} className="bg-[#0a0a18] border border-[#1e1e38] rounded-lg overflow-hidden hover:border-[#00f0ff]/50 transition-colors group flex flex-col">
-                      {/* Preview Area */}
-                      <div className="h-32 bg-[#050510] relative flex items-center justify-center border-b border-[#1e1e38]">
-                        <div className="text-6xl filter drop-shadow-[0_0_10px_rgba(0,240,255,0.3)] group-hover:scale-110 transition-transform">
-                          {asset.icon}
-                        </div>
-                        <div className="absolute top-2 right-2 bg-[#0a0a18] border border-[#00f0ff]/30 text-[#00f0ff] text-[10px] font-bold px-1.5 py-0.5 rounded">
-                          .GLB
-                        </div>
+                    <div key={asset.id} className="bg-[#0a0a18] border border-[#1e1e38] rounded-lg p-4 flex items-center gap-4">
+                      <div className="w-16 h-16 bg-[#050510] rounded border border-[#1e1e38] flex items-center justify-center text-3xl shrink-0">
+                        {asset.icon}
                       </div>
-
-                      {/* Info Area */}
-                      <div className="p-4 flex-1 flex flex-col">
-                        <div className="text-[#fcd34d] text-[10px] font-bold uppercase tracking-wider mb-1">{asset.typeLabel}</div>
-                        <div className="text-white font-bold text-sm mb-1 truncate">{asset.name}</div>
-                        <div className="text-gray-600 text-[10px] mb-3 truncate font-sans">{asset.path}</div>
-                        
-                        <div className="flex items-center gap-2 mb-4 mt-auto">
-                          <div className={`w-2 h-2 rounded-full ${isUploaded ? 'bg-[#00ff88] shadow-[0_0_8px_#00ff88]' : 'bg-[#ff0055] shadow-[0_0_8px_#ff0055]'}`}></div>
-                          <span className="text-[10px] font-bold tracking-wider text-gray-400">
-                            {isUploaded ? 'YÜKLENDİ' : 'BEKLEMEDE'}
-                          </span>
-                        </div>
-
-                        {/* Actions */}
-                        <div className="flex gap-2">
-                          <button 
-                            onClick={() => triggerUpload(asset.id)}
-                            disabled={isUploading}
-                            className="flex-1 flex items-center justify-center gap-2 bg-[#00f0ff]/5 hover:bg-[#00f0ff]/20 border border-[#00f0ff]/30 text-[#00f0ff] text-xs font-bold py-2 rounded transition-colors disabled:opacity-50"
-                          >
-                            {isUploading ? (
-                              <span>%{Math.round(uploadProgress)}</span>
-                            ) : (
-                              <>
-                                <Upload size={14} />
-                                YÜKLE
-                              </>
-                            )}
-                          </button>
+                      <div className="flex-1">
+                        <div className="flex justify-between items-center mb-2">
+                          <div>
+                            <div className="text-[#fcd34d] text-[10px] font-bold uppercase tracking-wider">{asset.typeLabel}</div>
+                            <div className="text-white font-bold text-sm">{asset.name}</div>
+                          </div>
                           <button 
                             onClick={() => handleReset(asset)}
-                            disabled={!isUploaded || isUploading}
-                            className="flex items-center justify-center w-10 bg-[#ff0055]/5 hover:bg-[#ff0055]/20 border border-[#ff0055]/30 text-[#ff0055] rounded transition-colors disabled:opacity-20"
+                            className="text-[#ff0055] hover:text-[#ff0055]/80 text-xs flex items-center gap-1"
                             title="Sıfırla"
                           >
-                            <RotateCcw size={14} />
+                            <RotateCcw size={12} />
+                            Sıfırla
                           </button>
                         </div>
+                        <input
+                          type="text"
+                          value={value}
+                          onChange={(e) => {
+                            let newConfig = { ...localConfig };
+                            if (asset.subKey) {
+                              newConfig = {
+                                ...newConfig,
+                                [asset.category]: {
+                                  ...(newConfig[asset.category] as any || {}),
+                                  [asset.subKey]: e.target.value
+                                }
+                              };
+                            } else {
+                              newConfig = {
+                                ...newConfig,
+                                [asset.category]: e.target.value
+                              };
+                            }
+                            setLocalConfig(newConfig);
+                          }}
+                          placeholder={`Örn: /models/${asset.id}.glb`}
+                          className="w-full bg-[#050510] border border-[#1e1e38] rounded p-2 text-white text-sm focus:border-[#00f0ff] outline-none"
+                        />
                       </div>
                     </div>
                   );
                 })}
               </div>
-            </>
+
+              <button 
+                onClick={() => handleSave(localConfig)}
+                disabled={saving}
+                className="w-full py-3 bg-[#00f0ff] hover:bg-[#00f0ff]/80 text-black font-bold rounded transition-colors disabled:opacity-50"
+              >
+                {saving ? 'KAYDEDİLİYOR...' : 'AYARLARI KAYDET'}
+              </button>
+            </div>
           )}
 
           {activeTab === 'settings' && (

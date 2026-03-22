@@ -3,8 +3,6 @@ import { Game } from './components/Game';
 import { AdminPanel } from './components/AdminPanel';
 import { useGameStore, GameConfig } from './store';
 import { useDrag } from '@use-gesture/react';
-import { db } from './firebase';
-import { doc, getDoc } from 'firebase/firestore';
 
 export default function App() {
   const status = useGameStore(state => state.status);
@@ -24,15 +22,14 @@ export default function App() {
   const setConfig = useGameStore(state => state.setConfig);
 
   useEffect(() => {
-    const loadConfig = async () => {
+    const loadConfig = () => {
       try {
-        const docRef = doc(db, 'config', 'game');
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-          setConfig(docSnap.data() as GameConfig);
+        const saved = localStorage.getItem('neon_rush_config');
+        if (saved) {
+          setConfig(JSON.parse(saved) as GameConfig);
         }
       } catch (err) {
-        console.error("Failed to load config:", err);
+        console.error("Failed to load config from localStorage:", err);
       }
     };
     loadConfig();
